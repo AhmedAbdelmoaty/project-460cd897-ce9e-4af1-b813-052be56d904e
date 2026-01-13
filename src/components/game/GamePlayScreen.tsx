@@ -15,7 +15,7 @@ interface GamePlayScreenProps {
   stepsUsed: number;
   remainingSteps: number;
   remainingAttempts: number;
-  onPerformAction: (actionId: ActionId) => { evidenceId: EvidenceId | null };
+  onPerformAction: (actionId: ActionId) => { evidenceIds: EvidenceId[] };
   onRejectHypothesis: (hypothesisId: HypothesisId, evidenceId: EvidenceId) => { success: boolean; message: string };
   onDeclareSolution: (hypothesisId: HypothesisId, evidenceId: EvidenceId) => { success: boolean };
 }
@@ -50,6 +50,9 @@ export function GamePlayScreen({
   const evidenceList = mainScenario.evidence.filter(e => discoveredEvidence.includes(e.id));
   const progressPercent = (stepsUsed / 5) * 100;
 
+  // فلترة الأفعال - حذف declare_solution (يظهر كزر منفصل)
+  const availableActions = mainScenario.actions.filter(a => a.id !== 'declare_solution');
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-muted/30 p-4" dir="rtl">
       <div className="max-w-4xl mx-auto space-y-4">
@@ -59,11 +62,16 @@ export function GamePlayScreen({
             <Badge variant="outline" className="text-sm px-3 py-1">
               🎯 المحاولة {4 - remainingAttempts}/{3}
             </Badge>
-            <Badge variant={remainingSteps <= 2 ? "destructive" : "secondary"} className="text-sm px-3 py-1">
+            <Badge variant={remainingSteps <= 1 ? "destructive" : "secondary"} className="text-sm px-3 py-1">
               👣 الخطوات: {remainingSteps}/5
             </Badge>
           </div>
           <Progress value={progressPercent} className="w-32 h-2" />
+        </div>
+
+        {/* Step explanation */}
+        <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-2 text-center">
+          💡 جمع الأدلة وإعلان الحل يستهلك خطوات • رفض الفرضيات مجاني
         </div>
 
         <div className="grid md:grid-cols-3 gap-4">
@@ -83,7 +91,7 @@ export function GamePlayScreen({
                 <CardTitle className="text-lg">ماذا تريد أن تفعل؟</CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-2 gap-3">
-                {mainScenario.actions.filter(a => a.id !== 'declare_solution').map(action => (
+                {availableActions.map(action => (
                   <Button
                     key={action.id}
                     variant="outline"
@@ -104,15 +112,16 @@ export function GamePlayScreen({
                 variant="outline"
                 className="h-auto py-4 border-destructive/50 hover:bg-destructive/10 hover:border-destructive"
                 onClick={() => setShowRejectModal(true)}
-                disabled={remainingSteps <= 0}
+                disabled={discoveredEvidence.length === 0}
               >
                 <span className="text-xl ml-2">❌</span>
                 ارفض فرضية
+                <span className="text-xs text-muted-foreground mr-1">(مجاني)</span>
               </Button>
               <Button
                 className="h-auto py-4 bg-accent hover:bg-accent/90"
                 onClick={() => setShowDeclareModal(true)}
-                disabled={remainingSteps <= 0}
+                disabled={remainingSteps <= 0 || discoveredEvidence.length === 0}
               >
                 <span className="text-xl ml-2">✅</span>
                 أعلن الحل

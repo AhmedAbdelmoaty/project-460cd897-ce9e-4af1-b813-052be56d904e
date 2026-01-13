@@ -8,8 +8,6 @@ interface IntroScreenProps {
 }
 
 export function IntroScreen({ onStartGame }: IntroScreenProps) {
-  const owner = mainScenario.characters.find(c => c.id === 'owner');
-
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gradient-to-br from-secondary/30 via-background to-primary/10" dir="rtl">
       <div className="w-full max-w-2xl space-y-6">
@@ -27,14 +25,14 @@ export function IntroScreen({ onStartGame }: IntroScreenProps) {
             <div className="flex gap-4 items-start">
               {/* Avatar */}
               <div className="flex-shrink-0 w-20 h-20 rounded-full bg-secondary flex items-center justify-center text-4xl shadow-lg">
-                {owner?.avatar}
+                🧔
               </div>
               
               {/* Dialogue */}
               <div className="flex-1 space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-foreground">{owner?.name}</span>
-                  <Badge variant="secondary" className="text-xs">{owner?.role}</Badge>
+                  <span className="font-bold text-foreground">أبو سعيد</span>
+                  <Badge variant="secondary" className="text-xs">صاحب المتجر</Badge>
                 </div>
                 
                 <div className="speech-bubble">

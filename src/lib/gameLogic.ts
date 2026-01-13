@@ -19,7 +19,8 @@ export function canRejectHypothesisWithEvidence(
   const validityRule = VALIDITY_MAP[hypothesisId];
   // H3 لا يمكن رفضها - هي الحل الصحيح
   if (hypothesisId === 'H3') return false;
-  return validityRule.validEvidence.includes(evidenceId);
+  // التحقق من أن الدليل ينفي هذه الفرضية
+  return validityRule.rejectEvidence.includes(evidenceId);
 }
 
 // التحقق من صلاحية الحل النهائي
@@ -27,12 +28,17 @@ export function canDeclareWithEvidence(
   hypothesisId: HypothesisId,
   evidenceId: EvidenceId
 ): { valid: boolean; isOptimal: boolean } {
+  // يجب أن تكون الفرضية هي H3 (الحل الصحيح)
   if (hypothesisId !== mainScenario.correctHypothesis) {
     return { valid: false, isOptimal: false };
   }
+  
   const validityRule = VALIDITY_MAP[hypothesisId];
-  const isValid = validityRule.validEvidence.includes(evidenceId);
-  const isOptimal = evidenceId === 'E3'; // الدليل الحاسم
+  // يجب أن يكون الدليل من الأدلة الداعمة (E3 أو E4)
+  const isValid = validityRule.supportEvidence.includes(evidenceId);
+  // E3 هو الدليل الحاسم
+  const isOptimal = evidenceId === 'E3';
+  
   return { valid: isValid, isOptimal };
 }
 
@@ -56,8 +62,8 @@ export function calculateScore(session: GameSession): number {
   if (rejectedH1 && rejectedH1.evidence === 'E1') {
     score += SCORING_RULES.REJECT_H1_WITH_E1;
   }
-  if (rejectedH2 && rejectedH2.evidence === 'E3') {
-    score += SCORING_RULES.REJECT_H2_WITH_E3;
+  if (rejectedH2 && rejectedH2.evidence === 'E5') {
+    score += SCORING_RULES.REJECT_H2_WITH_E5;
   }
 
   // مكافأة إعلان الحل
@@ -69,21 +75,29 @@ export function calculateScore(session: GameSession): number {
     }
   }
 
-  // مكافأة رفض H1 قبل الحل
+  // مكافأة رفض الفرضيتين قبل الحل
   const solutionStepIndex = currentAttempt.steps.findIndex(
     s => s.action === 'declare_solution'
   );
   const h1RejectionIndex = currentAttempt.steps.findIndex(
     s => s.action === 'reject_hypothesis' && s.hypothesis === 'H1' && s.valid
   );
-  if (h1RejectionIndex !== -1 && h1RejectionIndex < solutionStepIndex) {
-    score += SCORING_RULES.BONUS_REJECT_H1_BEFORE_SOLUTION;
+  const h2RejectionIndex = currentAttempt.steps.findIndex(
+    s => s.action === 'reject_hypothesis' && s.hypothesis === 'H2' && s.valid
+  );
+  
+  if (h1RejectionIndex !== -1 && h2RejectionIndex !== -1 && 
+      h1RejectionIndex < solutionStepIndex && h2RejectionIndex < solutionStepIndex) {
+    score += SCORING_RULES.BONUS_REJECT_BOTH_BEFORE_SOLUTION;
   }
 
-  // خصم الخطوات الزائدة
-  const stepsCount = currentAttempt.steps.length;
-  if (stepsCount > SCORING_RULES.MIN_STEPS_BEFORE_PENALTY) {
-    const extraSteps = stepsCount - SCORING_RULES.MIN_STEPS_BEFORE_PENALTY;
+  // خصم الخطوات الزائدة (نحسب فقط الخطوات التي تستهلك - جمع الأدلة وإعلان الحل)
+  const consumingSteps = currentAttempt.steps.filter(
+    s => s.action !== 'reject_hypothesis'
+  ).length;
+  
+  if (consumingSteps > SCORING_RULES.MIN_STEPS_BEFORE_PENALTY) {
+    const extraSteps = consumingSteps - SCORING_RULES.MIN_STEPS_BEFORE_PENALTY;
     score -= extraSteps * SCORING_RULES.PENALTY_PER_EXTRA_STEP;
   }
 
@@ -122,7 +136,9 @@ export function getRankIcon(rank: Rank): string {
 
 // بناء الـTimeline
 export function buildTimeline(steps: Step[]): TimelineItem[] {
-  return steps.map((step, index) => {
+  let displayStep = 0;
+  
+  return steps.map((step) => {
     let description = '';
     let outcome = '';
     let isPositive = true;
@@ -136,24 +152,31 @@ export function buildTimeline(steps: Step[]): TimelineItem[] {
         outcome = 'الربط غير صحيح ✗';
         isPositive = false;
       }
+      // رفض الفرضية لا يزيد رقم الخطوة
     } else if (step.action === 'declare_solution') {
+      displayStep++;
       description = 'أعلنت الحل النهائي';
       outcome = step.result === 'correct' ? 'الحل صحيح! ✓' : 'الحل خاطئ ✗';
       isPositive = step.result === 'correct';
     } else {
+      displayStep++;
       const action = mainScenario.actions.find(a => a.id === step.action);
       description = action?.label || step.action;
       if (step.result?.startsWith('discovered_')) {
-        const evidenceId = step.result.replace('discovered_', '') as EvidenceId;
-        const evidence = mainScenario.evidence.find(e => e.id === evidenceId);
-        outcome = `اكتشفت: ${evidence?.text.substring(0, 30)}...`;
+        const evidenceIdsStr = step.result.replace('discovered_', '');
+        const evidenceIds = evidenceIdsStr.split('_') as EvidenceId[];
+        const evidenceTexts = evidenceIds.map(id => {
+          const evidence = mainScenario.evidence.find(e => e.id === id);
+          return evidence?.text.substring(0, 25) + '...';
+        });
+        outcome = `اكتشفت: ${evidenceTexts.join(' | ')}`;
       } else {
         outcome = 'لا جديد';
       }
     }
 
     return {
-      step: index + 1,
+      step: displayStep,
       description,
       outcome,
       isPositive,
@@ -161,7 +184,59 @@ export function buildTimeline(steps: Step[]): TimelineItem[] {
   });
 }
 
-// توليد الـFeedback النهائي
+// توليد Feedback مفصّل للفشل بناءً على المسار الفعلي
+export function generateDetailedFailureFeedback(
+  chosenHypothesis: HypothesisId,
+  chosenEvidence: EvidenceId,
+  discoveredEvidence: EvidenceId[],
+  rejectedHypotheses: HypothesisId[]
+): string {
+  // الحالة 1: اختار H2 مع E2 (الفخ!)
+  if (chosenHypothesis === 'H2' && chosenEvidence === 'E2') {
+    return 'وقعت في فخ الدليل المُغري! "متوسط الفاتورة أقل" معلومة صحيحة، لكنها لا تفسّر لماذا. ابحث عن التناقض الحقيقي بين ما هو مُسجّل وما هو موجود فعلاً.';
+  }
+
+  // الحالة 2: اختار H2 مع أي دليل آخر
+  if (chosenHypothesis === 'H2') {
+    if (discoveredEvidence.includes('E5')) {
+      return 'أحد الأدلة التي اكتشفتها يقول بوضوح أن الزبائن يشترون نفس الأصناف والكميات. هذا ينفي فرضية أنهم يصرفون أقل!';
+    }
+    return 'هل تأكدت من أن الزبائن فعلاً يصرفون أقل؟ ابحث عن دليل يثبت أو ينفي هذا.';
+  }
+
+  // الحالة 3: اختار H1
+  if (chosenHypothesis === 'H1') {
+    if (discoveredEvidence.includes('E1')) {
+      return 'أحد الأدلة التي اكتشفتها يقول بوضوح أن حركة الزبائن طبيعية. هذا ينفي فرضية أن عددهم قلّ!';
+    }
+    return 'هل تأكدت من أن عدد الزبائن فعلاً قلّ؟ تحدث مع موظفي الصالة لتتأكد.';
+  }
+
+  // الحالة 4: اختار H3 لكن بدليل خاطئ
+  if (chosenHypothesis === 'H3') {
+    if (chosenEvidence === 'E1' || chosenEvidence === 'E5') {
+      return 'الفرضية صحيحة! لكن الدليل الذي اخترته لا يدعمها. ابحث عن دليل يُظهر مشكلة في التسجيل.';
+    }
+    if (chosenEvidence === 'E2') {
+      return 'الفرضية صحيحة! لكن "متوسط الفاتورة أقل" لا يثبت مشكلة في التسجيل. ابحث عن تناقض بين المخزون والفواتير.';
+    }
+  }
+
+  // الحالة 5: لم يجمع أدلة كافية
+  if (discoveredEvidence.length < 2) {
+    return 'لم تجمع معلومات كافية قبل إعلان النتيجة. المحلّل الجيد يبحث ويسأل قبل أن يحكم.';
+  }
+
+  // الحالة 6: لم يرفض أي فرضية
+  if (rejectedHypotheses.length === 0) {
+    return 'أعلنت النتيجة قبل أن تستبعد الاحتمالات الأخرى. حاول رفض الفرضيات الخاطئة بالأدلة أولاً.';
+  }
+
+  // الحالة الافتراضية
+  return 'توقفت عند احتمال لم تتأكد منه بالأدلة. أحيانًا الدليل الذي يبدو مقنعًا لا يحكي القصة كاملة. أعد التفكير!';
+}
+
+// توليد الـFeedback النهائي للنجاح
 export function generateFeedback(session: GameSession, rank: Rank): string {
   const currentAttempt = session.attempts[session.currentAttempt - 1];
   
@@ -169,48 +244,39 @@ export function generateFeedback(session: GameSession, rank: Rank): string {
     return generateFailureFeedback(currentAttempt);
   }
 
+  const rejectedBoth = currentAttempt.rejectedHypotheses.includes('H1') && 
+                       currentAttempt.rejectedHypotheses.includes('H2');
+  const usedE3 = currentAttempt.finalDecision?.evidence === 'E3';
+
   switch (rank) {
     case 'S':
-      return 'ممتاز! فكّرت بطريقة منهجية: جمعت الأدلة، استبعدت الاحتمالات الخاطئة، ثم وصلت للنتيجة الصحيحة. هكذا يفكّر المحلّلون المحترفون!';
+      return 'ممتاز! فكّرت بطريقة منهجية: جمعت الأدلة، استبعدت الاحتمالات الخاطئة واحدة تلو الأخرى، ثم وصلت للنتيجة بالدليل الحاسم. هكذا يفكّر المحلّلون المحترفون!';
     case 'A':
-      return 'أحسنت! وصلت للحل الصحيح وربطته بدليل قوي. لو استبعدت كل الفرضيات الخاطئة قبل إعلان النتيجة، كانت النتيجة أفضل.';
+      if (!rejectedBoth) {
+        return 'أحسنت! وصلت للحل الصحيح وربطته بدليل قوي. لو استبعدت كل الفرضيات الخاطئة بالأدلة قبل إعلان النتيجة، كانت النتيجة أفضل.';
+      }
+      return 'أحسنت! مسار تفكيرك كان جيدًا. استبعدت الخطأ وربطت الحل بدليل صحيح.';
     case 'B':
-      return 'وصلت للحل الصحيح، لكن مسارك كان يمكن أن يكون أقصر وأدق. حاول ترفض الاحتمالات الخاطئة أولًا قبل القفز للنتيجة.';
+      if (!usedE3) {
+        return 'وصلت للحل الصحيح، لكن استخدمت دليلًا داعمًا بدلاً من الدليل الحاسم. الدليل الأقوى هو الذي يُظهر التناقض مباشرة.';
+      }
+      return 'وصلت للحل الصحيح، لكن مسارك كان يمكن أن يكون أقصر وأدق. حاول ترفض الاحتمالات الخاطئة أولًا.';
     case 'C':
       return 'وصلت للحل، لكن بجهد كبير ومحاولات كثيرة. التفكير التحليلي يعني استبعاد الخطأ بالدليل، وليس التجريب العشوائي.';
   }
 }
 
-// توليد Feedback الفشل
+// توليد Feedback الفشل (قديم - للتوافق)
 export function generateFailureFeedback(attempt: any): string {
   if (!attempt) {
     return 'لم تبدأ المحاولة بعد.';
   }
-
-  // تحليل سبب الفشل
-  const hasE2 = attempt.discoveredEvidence?.includes('E2');
-  const hasE3 = attempt.discoveredEvidence?.includes('E3');
-  const rejectedAny = attempt.rejectedHypotheses?.length > 0;
-  const evidenceCount = attempt.discoveredEvidence?.length || 0;
-
-  if (evidenceCount < 2) {
-    return 'لم تجمع معلومات كافية قبل إعلان النتيجة. المحلّل الجيد يبحث ويسأل قبل أن يحكم.';
-  }
-
-  if (hasE2 && !hasE3) {
-    return 'وقعت في فخ الدليل المُغري! بعض المعلومات تبدو مهمة لكنها لا تحسم شيء. ابحث عن الدليل الذي يكشف التناقض الحقيقي.';
-  }
-
-  if (!rejectedAny) {
-    return 'أعلنت النتيجة قبل ما تستبعد كل الاحتمالات الخاطئة. الحل الصحيح يظهر فقط عندما ترفض الخطأ بالدليل.';
-  }
-
-  return 'توقفت عند احتمال لم تتأكد منه بالأدلة. أحيانًا الدليل الذي يبدو مقنعًا لا يحكي القصة كاملة. أعد التفكير!';
+  return 'توقفت عند احتمال لم تتأكد منه بالأدلة.';
 }
 
 // توليد Feedback انتهاء المحاولات
 export function generateGameOverFeedback(): string {
-  return 'استنفدت محاولاتك! يبدو أن هناك جزء من اللغز لم تراه. الحل يكمن في البحث عن التناقض بين ما هو مُسجّل وما هو موجود فعلًا. حاول مجددًا بعقل منفتح!';
+  return 'استنفدت محاولاتك! اللغز كان في التناقض: بضائع تخرج من الرفوف لكن لا تظهر في السجلات. الموظفة الجديدة لا تُسجّل كل المبيعات وقت الزحمة. أعد التفكير: من يُسجّل؟ ومتى لا يُسجّل؟';
 }
 
 // حساب النتيجة الكاملة

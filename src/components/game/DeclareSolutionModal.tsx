@@ -64,10 +64,15 @@ export function DeclareSolutionModal({
           ) : (
             <>
               {/* Warning */}
-              <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
-                <p className="text-sm text-warning-foreground">
-                  ⚠️ تحذير: هذا القرار نهائي! تأكد من اختيارك قبل الإعلان.
+              <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 space-y-2">
+                <p className="text-sm font-medium text-foreground">
+                  ⚠️ تحذير: هذا القرار نهائي!
                 </p>
+                <ul className="text-xs text-muted-foreground space-y-1">
+                  <li>• يجب أن تختار الفرضية الصحيحة</li>
+                  <li>• يجب أن تربطها بدليل يدعمها</li>
+                  <li>• الدليل الخاطئ = فشل حتى لو الفرضية صحيحة</li>
+                </ul>
               </div>
 
               {/* Step 1: Select Hypothesis */}
