@@ -49,6 +49,7 @@ export function useGameSession() {
       steps: [],
       discoveredEvidence: [],
       rejectedHypotheses: [],
+      reasoningMistakes: 0,
       status: 'in_progress',
     };
 
@@ -116,11 +117,18 @@ export function useGameSession() {
       return { success: false, message: 'لا توجد جلسة نشطة' };
     }
 
+    if (evidenceIds.length === 0) {
+      return { success: false, message: 'لا يمكنك رفض فرضية بدون دليل.' };
+    }
+
     if (hypothesisId === 'H3') {
       return { success: false, message: 'هذه الفرضية لا يمكن نفيها بالأدلة المتاحة!' };
     }
 
     const result = canRejectHypothesisWithEvidence(hypothesisId, evidenceIds);
+    const currentAttemptIndex = session.currentAttempt - 1;
+    const currentMistakes = session.attempts[currentAttemptIndex]?.reasoningMistakes ?? 0;
+    const nextMistakes = result.valid ? currentMistakes : currentMistakes + 1;
 
     // إضافة الخطوة
     const newStep: Step = {
@@ -132,36 +140,28 @@ export function useGameSession() {
       timestamp: Date.now(),
     };
 
-    // إذا كان النفي خاطئاً - خسارة محاولة
     if (!result.valid) {
-      const feedbackMessage = result.isTrap 
+      const baseMessage = result.isTrap 
         ? result.trapMessage! 
         : generateRejectionFailureFeedback(hypothesisId, evidenceIds);
-      
+      const feedbackMessage = nextMistakes >= 3
+        ? `${baseMessage} أنت تكرر الرفض بدون أساس قوي—راجع الأدلة قبل المحاولة التالية.`
+        : baseMessage;
+
       setSession(prev => {
         const attempts = [...prev!.attempts];
-        const currentAttemptIndex = prev!.currentAttempt - 1;
+        const attempt = attempts[currentAttemptIndex];
         attempts[currentAttemptIndex] = {
-          ...attempts[currentAttemptIndex],
-          steps: [...attempts[currentAttemptIndex].steps, newStep],
-          status: 'failed',
+          ...attempt,
+          steps: [...attempt.steps, newStep],
+          reasoningMistakes: nextMistakes,
         };
         return { ...prev!, attempts };
       });
 
-      // التحقق من عدد المحاولات المتبقية
-      if (session.currentAttempt >= GAME_LIMITS.MAX_ATTEMPTS) {
-        setFailureFeedback(feedbackMessage);
-        setScreen('gameover');
-      } else {
-        setFailureFeedback(feedbackMessage);
-        setScreen('failure');
-      }
-
       return { 
         success: false, 
         message: feedbackMessage,
-        lostAttempt: true 
       };
     }
 
@@ -172,7 +172,6 @@ export function useGameSession() {
 
     setSession(prev => {
       const attempts = [...prev!.attempts];
-      const currentAttemptIndex = prev!.currentAttempt - 1;
       attempts[currentAttemptIndex] = {
         ...attempts[currentAttemptIndex],
         steps: [...attempts[currentAttemptIndex].steps, newStep],
@@ -268,6 +267,7 @@ export function useGameSession() {
         steps: [],
         discoveredEvidence: [],
         rejectedHypotheses: [],
+        reasoningMistakes: 0,
         status: 'in_progress',
       };
 

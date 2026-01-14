@@ -163,6 +163,15 @@ export function calculateScore(session: GameSession): number {
     score -= SCORING_RULES.PENALTY_NO_REJECTIONS;
   }
 
+  const reasoningMistakes = currentAttempt.reasoningMistakes ?? 0;
+  if (reasoningMistakes > 0) {
+    const basePenalty = reasoningMistakes * SCORING_RULES.PENALTY_REASONING_MISTAKE;
+    const extraPenalty = reasoningMistakes > 2
+      ? (reasoningMistakes - 2) * SCORING_RULES.PENALTY_REASONING_MISTAKE_ESCALATION
+      : 0;
+    score -= basePenalty + extraPenalty;
+  }
+
   // تطبيق معامل المحاولات
   if (session.currentAttempt === 2) {
     score = Math.floor(score * SCORING_RULES.ATTEMPT_2_MULTIPLIER);
@@ -240,15 +249,20 @@ export function generateFeedback(session: GameSession, rank: Rank): string {
     return generateFailureFeedback(currentAttempt);
   }
 
+  const reasoningMistakes = currentAttempt.reasoningMistakes ?? 0;
+  const mistakesNote = reasoningMistakes > 0
+    ? ` تم تسجيل أخطاء استدلال: ${reasoningMistakes}.`
+    : '';
+
   switch (rank) {
     case 'S':
-      return 'ممتاز! فكّرت بطريقة منهجية: رفضت الفرضيات الخاطئة بالأدلة الصحيحة، ثم أثبتّ الحل بأقوى الأدلة. هكذا يعمل المحققون المحترفون!';
+      return `ممتاز! فكّرت بطريقة منهجية: رفضت الفرضيات الخاطئة بالأدلة الصحيحة، ثم أثبتّ الحل بأقوى الأدلة. هكذا يعمل المحققون المحترفون!${mistakesNote}`;
     case 'A':
-      return 'أحسنت! وصلت للحل الصحيح بطريقة جيدة. لو جمعت بين E3 و E4 معاً، أو رفضت كل الفرضيات الخاطئة أولاً، كانت النتيجة أفضل.';
+      return `أحسنت! وصلت للحل الصحيح بطريقة جيدة. لو جمعت بين E3 و E4 معاً، أو رفضت كل الفرضيات الخاطئة أولاً، كانت النتيجة أفضل.${mistakesNote}`;
     case 'B':
-      return 'وصلت للحل، لكن مسارك كان يمكن أن يكون أدق. تذكّر: الأدلة الحاسمة (مثل فرق المخزون) أقوى من الأدلة الداعمة.';
+      return `وصلت للحل، لكن مسارك كان يمكن أن يكون أدق. تذكّر: الأدلة الحاسمة (مثل فرق المخزون) أقوى من الأدلة الداعمة.${mistakesNote}`;
     case 'C':
-      return 'وصلت للحل لكن بعد جهد. التفكير التحليلي يعني: اجمع الأدلة أولاً، ارفض الخطأ بالدليل، ثم أثبت الصحيح بأقوى دليل.';
+      return `وصلت للحل لكن بعد جهد. التفكير التحليلي يعني: اجمع الأدلة أولاً، ارفض الخطأ بالدليل، ثم أثبت الصحيح بأقوى دليل.${mistakesNote}`;
   }
 }
 

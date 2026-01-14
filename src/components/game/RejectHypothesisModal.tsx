@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { HypothesisId, EvidenceId, Hypothesis } from '@/types/game';
 import { mainScenario } from '@/data/scenario';
 
@@ -23,6 +24,7 @@ export function RejectHypothesisModal({
   const [selectedHypothesis, setSelectedHypothesis] = useState<HypothesisId | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceId[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState('');
 
   const activeHypotheses = hypotheses.filter(h => h.status === 'active');
   const evidenceList = mainScenario.evidence.filter(e => discoveredEvidence.includes(e.id));
@@ -36,7 +38,15 @@ export function RejectHypothesisModal({
   };
 
   const handleRejectClick = () => {
-    if (!selectedHypothesis || selectedEvidence.length === 0) return;
+    if (!selectedHypothesis) {
+      setFeedbackMessage('اختر الفرضية أولاً قبل محاولة الرفض.');
+      return;
+    }
+    if (selectedEvidence.length === 0) {
+      setFeedbackMessage('لا يمكنك رفض فرضية بدون دليل.');
+      return;
+    }
+    setFeedbackMessage('');
     setShowConfirmation(true);
   };
 
@@ -47,9 +57,9 @@ export function RejectHypothesisModal({
     
     if (result.success) {
       handleClose();
-    } else if (result.lostAttempt) {
-      // Modal will close automatically as screen changes
-      handleClose();
+    } else {
+      setFeedbackMessage(result.message);
+      setShowConfirmation(false);
     }
   };
 
@@ -57,6 +67,7 @@ export function RejectHypothesisModal({
     setSelectedHypothesis(null);
     setSelectedEvidence([]);
     setShowConfirmation(false);
+    setFeedbackMessage('');
     onClose();
   };
 
@@ -93,7 +104,7 @@ export function RejectHypothesisModal({
                   هل أنت متأكد؟
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  النفي الخاطئ يكلفك محاولة كاملة!
+                  النفي الخاطئ يسجل خطأ استدلال ويؤثر على النتيجة.
                 </p>
               </div>
               
@@ -132,6 +143,12 @@ export function RejectHypothesisModal({
             </div>
           ) : (
             <>
+              {feedbackMessage && (
+                <Alert variant="destructive">
+                  <AlertTitle>تنبيه</AlertTitle>
+                  <AlertDescription>{feedbackMessage}</AlertDescription>
+                </Alert>
+              )}
               {/* Step 1: Select Hypothesis */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-muted-foreground">
