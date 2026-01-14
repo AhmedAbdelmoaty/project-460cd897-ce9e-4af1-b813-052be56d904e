@@ -10,7 +10,11 @@ import {
   GAME_LIMITS 
 } from '@/types/game';
 import { mainScenario } from '@/data/scenario';
-import { canRejectHypothesisWithEvidence, canDeclareWithEvidence } from '@/lib/gameLogic';
+import { 
+  canRejectHypothesisWithEvidence, 
+  canDeclareWithEvidence,
+  generateRejectionFailureFeedback 
+} from '@/lib/gameLogic';
 
 export type GameScreen = 'welcome' | 'intro' | 'gameplay' | 'failure' | 'gameover' | 'success';
 
@@ -103,36 +107,68 @@ export function useGameSession() {
     return { evidenceId };
   }, [session, stepsUsed, discoveredEvidence]);
 
-  // رفض فرضية
-  const rejectHypothesis = useCallback((hypothesisId: HypothesisId, evidenceId: EvidenceId): { success: boolean; message: string } => {
+  // رفض فرضية - محدث ليشمل خسارة المحاولة عند الخطأ
+  const rejectHypothesis = useCallback((
+    hypothesisId: HypothesisId, 
+    evidenceIds: EvidenceId[]
+  ): { success: boolean; message: string; lostAttempt?: boolean } => {
     if (!session) {
       return { success: false, message: 'لا توجد جلسة نشطة' };
     }
 
     if (hypothesisId === 'H3') {
-      return { success: false, message: 'لا يمكن رفض هذه الفرضية بهذا الدليل' };
+      return { success: false, message: 'هذه الفرضية لا يمكن نفيها بالأدلة المتاحة!' };
     }
 
-    const isValid = canRejectHypothesisWithEvidence(hypothesisId, evidenceId);
-
-    if (!isValid) {
-      return { success: false, message: 'هذا الدليل لا ينفي هذه الفرضية. حاول ربطها بدليل آخر.' };
-    }
-
-    // تحديث الفرضيات
-    setHypotheses(prev => 
-      prev.map(h => h.id === hypothesisId ? { ...h, status: 'rejected' as const } : h)
-    );
+    const result = canRejectHypothesisWithEvidence(hypothesisId, evidenceIds);
 
     // إضافة الخطوة
     const newStep: Step = {
       stepNumber: stepsUsed + 1,
       action: 'reject_hypothesis',
       hypothesis: hypothesisId,
-      evidence: evidenceId,
-      valid: true,
+      evidence: evidenceIds,
+      valid: result.valid,
       timestamp: Date.now(),
     };
+
+    // إذا كان النفي خاطئاً - خسارة محاولة
+    if (!result.valid) {
+      const feedbackMessage = result.isTrap 
+        ? result.trapMessage! 
+        : generateRejectionFailureFeedback(hypothesisId, evidenceIds);
+      
+      setSession(prev => {
+        const attempts = [...prev!.attempts];
+        const currentAttemptIndex = prev!.currentAttempt - 1;
+        attempts[currentAttemptIndex] = {
+          ...attempts[currentAttemptIndex],
+          steps: [...attempts[currentAttemptIndex].steps, newStep],
+          status: 'failed',
+        };
+        return { ...prev!, attempts };
+      });
+
+      // التحقق من عدد المحاولات المتبقية
+      if (session.currentAttempt >= GAME_LIMITS.MAX_ATTEMPTS) {
+        setFailureFeedback(feedbackMessage);
+        setScreen('gameover');
+      } else {
+        setFailureFeedback(feedbackMessage);
+        setScreen('failure');
+      }
+
+      return { 
+        success: false, 
+        message: feedbackMessage,
+        lostAttempt: true 
+      };
+    }
+
+    // النفي صحيح
+    setHypotheses(prev => 
+      prev.map(h => h.id === hypothesisId ? { ...h, status: 'rejected' as const } : h)
+    );
 
     setSession(prev => {
       const attempts = [...prev!.attempts];
@@ -145,24 +181,25 @@ export function useGameSession() {
       return { ...prev!, attempts };
     });
 
-    setStepsUsed(prev => prev + 1);
-
-    return { success: true, message: 'تم رفض الفرضية بنجاح!' };
+    return { success: true, message: 'تم رفض الفرضية بنجاح! 🎯' };
   }, [session, stepsUsed]);
 
-  // إعلان الحل
-  const declareSolution = useCallback((hypothesisId: HypothesisId, evidenceId: EvidenceId): { success: boolean } => {
+  // إعلان الحل - محدث لدعم أدلة متعددة
+  const declareSolution = useCallback((
+    hypothesisId: HypothesisId, 
+    evidenceIds: EvidenceId[]
+  ): { success: boolean } => {
     if (!session) {
       return { success: false };
     }
 
-    const { valid, isOptimal } = canDeclareWithEvidence(hypothesisId, evidenceId);
+    const { valid, isOptimal } = canDeclareWithEvidence(hypothesisId, evidenceIds);
 
     const newStep: Step = {
       stepNumber: stepsUsed + 1,
       action: 'declare_solution',
       hypothesis: hypothesisId,
-      evidence: evidenceId,
+      evidence: evidenceIds,
       result: valid ? 'correct' : 'incorrect',
       valid,
       timestamp: Date.now(),
@@ -170,7 +207,7 @@ export function useGameSession() {
 
     const finalDecision = {
       hypothesis: hypothesisId,
-      evidence: evidenceId,
+      evidence: evidenceIds,
       correct: valid,
     };
 
@@ -196,16 +233,19 @@ export function useGameSession() {
         // توليد feedback للفشل
         const hasE2 = discoveredEvidence.includes('E2');
         const hasE3 = discoveredEvidence.includes('E3');
+        const hasE5 = discoveredEvidence.includes('E5');
         const rejectedAny = hypotheses.some(h => h.status === 'rejected');
 
         if (discoveredEvidence.length < 2) {
           setFailureFeedback('لم تجمع معلومات كافية قبل إعلان النتيجة. المحلّل الجيد يبحث ويسأل قبل أن يحكم.');
+        } else if (hasE5 && !hasE3) {
+          setFailureFeedback('اعتمدت على آراء شخصية بدلاً من الحقائق! ابحث عن أدلة ملموسة.');
         } else if (hasE2 && !hasE3) {
-          setFailureFeedback('وقعت في فخ الدليل المُغري! بعض المعلومات تبدو مهمة لكنها لا تحسم شيء. ابحث عن الدليل الذي يكشف التناقض الحقيقي.');
+          setFailureFeedback('وقعت في فخ الأرقام المغرية! متوسط الفاتورة الأقل قد يكون نتيجة وليس سبباً.');
         } else if (!rejectedAny) {
-          setFailureFeedback('أعلنت النتيجة قبل ما تستبعد كل الاحتمالات الخاطئة. الحل الصحيح يظهر فقط عندما ترفض الخطأ بالدليل.');
+          setFailureFeedback('قفزت للنتيجة بدون استبعاد الاحتمالات الخاطئة! جرّب رفض الفرضيات الخاطئة أولاً.');
         } else {
-          setFailureFeedback('توقفت عند احتمال لم تتأكد منه بالأدلة. أحيانًا الدليل الذي يبدو مقنعًا لا يحكي القصة كاملة. أعد التفكير!');
+          setFailureFeedback('اخترت الفرضية الخاطئة! راجع الأدلة بعناية وفكّر: أي دليل يكشف تناقضاً حقيقياً؟');
         }
 
         setScreen('failure');

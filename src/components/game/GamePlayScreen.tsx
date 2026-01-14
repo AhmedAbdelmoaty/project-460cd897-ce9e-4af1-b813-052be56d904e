@@ -16,8 +16,8 @@ interface GamePlayScreenProps {
   remainingSteps: number;
   remainingAttempts: number;
   onPerformAction: (actionId: ActionId) => { evidenceId: EvidenceId | null };
-  onRejectHypothesis: (hypothesisId: HypothesisId, evidenceId: EvidenceId) => { success: boolean; message: string };
-  onDeclareSolution: (hypothesisId: HypothesisId, evidenceId: EvidenceId) => { success: boolean };
+  onRejectHypothesis: (hypothesisId: HypothesisId, evidenceIds: EvidenceId[]) => { success: boolean; message: string; lostAttempt?: boolean };
+  onDeclareSolution: (hypothesisId: HypothesisId, evidenceIds: EvidenceId[]) => { success: boolean };
 }
 
 export function GamePlayScreen({
@@ -48,7 +48,12 @@ export function GamePlayScreen({
   };
 
   const evidenceList = mainScenario.evidence.filter(e => discoveredEvidence.includes(e.id));
-  const progressPercent = (stepsUsed / 5) * 100;
+  const progressPercent = (stepsUsed / 6) * 100;
+  
+  // Filter actions for main grid (exclude declare_solution and check_stock as it duplicates talk_stockkeeper)
+  const mainActions = mainScenario.actions.filter(a => 
+    a.id !== 'declare_solution' && a.id !== 'check_stock'
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-muted/30 p-4" dir="rtl">
@@ -60,7 +65,7 @@ export function GamePlayScreen({
               🎯 المحاولة {4 - remainingAttempts}/{3}
             </Badge>
             <Badge variant={remainingSteps <= 2 ? "destructive" : "secondary"} className="text-sm px-3 py-1">
-              👣 الخطوات: {remainingSteps}/5
+              👣 الخطوات: {remainingSteps}/6
             </Badge>
           </div>
           <Progress value={progressPercent} className="w-32 h-2" />
@@ -83,7 +88,7 @@ export function GamePlayScreen({
                 <CardTitle className="text-lg">ماذا تريد أن تفعل؟</CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-2 gap-3">
-                {mainScenario.actions.filter(a => a.id !== 'declare_solution').map(action => (
+                {mainActions.map(action => (
                   <Button
                     key={action.id}
                     variant="outline"
@@ -104,7 +109,6 @@ export function GamePlayScreen({
                 variant="outline"
                 className="h-auto py-4 border-destructive/50 hover:bg-destructive/10 hover:border-destructive"
                 onClick={() => setShowRejectModal(true)}
-                disabled={remainingSteps <= 0}
               >
                 <span className="text-xl ml-2">❌</span>
                 ارفض فرضية
