@@ -26,6 +26,24 @@ export function useGameSession() {
   const [stepsUsed, setStepsUsed] = useState(0);
   const [failureFeedback, setFailureFeedback] = useState('');
 
+  const createAttempt = (attemptNumber: number): Attempt => ({
+    attemptNumber,
+    steps: [],
+    discoveredEvidence: [],
+    rejectedHypotheses: [],
+    status: 'in_progress',
+  });
+
+  const ensureAttemptForIndex = (attempts: Attempt[], index: number): Attempt[] => {
+    if (attempts[index]) {
+      return attempts;
+    }
+    const nextAttempts = [...attempts];
+    const attemptNumber = index + 1;
+    nextAttempts[index] = createAttempt(attemptNumber);
+    return nextAttempts;
+  };
+
   // بدء جلسة جديدة
   const startNewSession = useCallback(() => {
     const newSession: GameSession = {
@@ -44,13 +62,7 @@ export function useGameSession() {
   const startAttempt = useCallback(() => {
     if (!session) return;
 
-    const newAttempt: Attempt = {
-      attemptNumber: session.currentAttempt,
-      steps: [],
-      discoveredEvidence: [],
-      rejectedHypotheses: [],
-      status: 'in_progress',
-    };
+    const newAttempt = createAttempt(session.currentAttempt);
 
     setSession(prev => ({
       ...prev!,
@@ -90,8 +102,9 @@ export function useGameSession() {
     }
 
     setSession(prev => {
-      const attempts = [...prev!.attempts];
+      let attempts = [...prev!.attempts];
       const currentAttemptIndex = prev!.currentAttempt - 1;
+      attempts = ensureAttemptForIndex(attempts, currentAttemptIndex);
       attempts[currentAttemptIndex] = {
         ...attempts[currentAttemptIndex],
         steps: [...attempts[currentAttemptIndex].steps, newStep],
@@ -139,8 +152,9 @@ export function useGameSession() {
         : generateRejectionFailureFeedback(hypothesisId, evidenceIds);
       
       setSession(prev => {
-        const attempts = [...prev!.attempts];
+        let attempts = [...prev!.attempts];
         const currentAttemptIndex = prev!.currentAttempt - 1;
+        attempts = ensureAttemptForIndex(attempts, currentAttemptIndex);
         attempts[currentAttemptIndex] = {
           ...attempts[currentAttemptIndex],
           steps: [...attempts[currentAttemptIndex].steps, newStep],
@@ -171,8 +185,9 @@ export function useGameSession() {
     );
 
     setSession(prev => {
-      const attempts = [...prev!.attempts];
+      let attempts = [...prev!.attempts];
       const currentAttemptIndex = prev!.currentAttempt - 1;
+      attempts = ensureAttemptForIndex(attempts, currentAttemptIndex);
       attempts[currentAttemptIndex] = {
         ...attempts[currentAttemptIndex],
         steps: [...attempts[currentAttemptIndex].steps, newStep],
@@ -212,8 +227,9 @@ export function useGameSession() {
     };
 
     setSession(prev => {
-      const attempts = [...prev!.attempts];
+      let attempts = [...prev!.attempts];
       const currentAttemptIndex = prev!.currentAttempt - 1;
+      attempts = ensureAttemptForIndex(attempts, currentAttemptIndex);
       attempts[currentAttemptIndex] = {
         ...attempts[currentAttemptIndex],
         steps: [...attempts[currentAttemptIndex].steps, newStep],
@@ -259,10 +275,14 @@ export function useGameSession() {
   const retryAttempt = useCallback(() => {
     if (!session) return;
 
-    setSession(prev => ({
-      ...prev!,
-      currentAttempt: prev!.currentAttempt + 1,
-    }));
+    setSession(prev => {
+      const nextAttemptNumber = prev!.currentAttempt + 1;
+      return {
+        ...prev!,
+        currentAttempt: nextAttemptNumber,
+        attempts: [...prev!.attempts, createAttempt(nextAttemptNumber)],
+      };
+    });
 
     // إعادة تعيين الحالة
     setHypotheses([...mainScenario.hypotheses]);
