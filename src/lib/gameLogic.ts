@@ -242,65 +242,152 @@ export function buildTimeline(steps: Step[]): TimelineItem[] {
 }
 
 // توليد الـFeedback النهائي
-export function generateFeedback(session: GameSession, rank: Rank): string {
-  const currentAttempt = session.attempts[session.currentAttempt - 1];
-  
-  if (!currentAttempt || currentAttempt.status !== 'success') {
-    return generateFailureFeedback(currentAttempt);
+type MessageType =
+  | 'SUCCESS_FULL'
+  | 'SUCCESS_AFTER_CORRECTION'
+  | 'SUCCESS_JUMPED_EARLY'
+  | 'SUCCESS_PARTIAL_ELIMINATION'
+  | 'SUCCESS_DEFAULT'
+  | 'FAIL_RANDOM_REJECTION'
+  | 'FAIL_THOUGHTFUL_TRICKED'
+  | 'FAIL_GUESSING';
+
+type AttemptIndicators = {
+  isCorrectFinal: boolean;
+  evidenceSeenCount: number;
+  validRejectedCount: number;
+  invalidRejectionCount: number;
+  rejectedAllAlternatives: boolean;
+  correctedAfterMistake: boolean;
+  jumpedTooEarly: boolean;
+};
+
+function getAttemptIndicators(attempt: Attempt | undefined): AttemptIndicators {
+  const evidenceSeenCount = attempt?.discoveredEvidence?.length ?? 0;
+  const rejectionSteps = attempt?.steps.filter(
+    step => step.action === 'reject_hypothesis'
+  ) ?? [];
+  const validRejectedCount = rejectionSteps.filter(step => step.valid).length;
+  const invalidRejectionCount = rejectionSteps.filter(step => step.valid === false).length;
+  const isCorrectFinal = attempt?.finalDecision?.correct === true;
+  const alternativesCount = mainScenario.hypotheses.filter(
+    hypothesis => hypothesis.id !== mainScenario.correctHypothesis
+  ).length;
+  const rejectedAllAlternatives = validRejectedCount >= alternativesCount;
+  const correctedAfterMistake = invalidRejectionCount > 0 && validRejectedCount > 0;
+  const jumpedTooEarly = validRejectedCount === 0 && evidenceSeenCount < 2;
+
+  return {
+    isCorrectFinal,
+    evidenceSeenCount,
+    validRejectedCount,
+    invalidRejectionCount,
+    rejectedAllAlternatives,
+    correctedAfterMistake,
+    jumpedTooEarly,
+  };
+}
+
+function classifyMessageType(indicators: AttemptIndicators): MessageType {
+  if (indicators.isCorrectFinal) {
+    if (indicators.rejectedAllAlternatives && indicators.validRejectedCount >= 2) {
+      return 'SUCCESS_FULL';
+    }
+    if (indicators.correctedAfterMistake) {
+      return 'SUCCESS_AFTER_CORRECTION';
+    }
+    if (indicators.jumpedTooEarly) {
+      return 'SUCCESS_JUMPED_EARLY';
+    }
+    if (
+      indicators.validRejectedCount === 1 ||
+      (indicators.validRejectedCount > 0 && !indicators.rejectedAllAlternatives)
+    ) {
+      return 'SUCCESS_PARTIAL_ELIMINATION';
+    }
+    return 'SUCCESS_DEFAULT';
   }
 
-  const reasoningMistakes = currentAttempt.reasoningMistakes ?? 0;
-  const mistakesNote = reasoningMistakes > 0
-    ? ` تم تسجيل أخطاء استدلال: ${reasoningMistakes}.`
+  if (indicators.invalidRejectionCount >= 2) {
+    return 'FAIL_RANDOM_REJECTION';
+  }
+  if (indicators.evidenceSeenCount >= 3 || indicators.validRejectedCount >= 1) {
+    return 'FAIL_THOUGHTFUL_TRICKED';
+  }
+  return 'FAIL_GUESSING';
+}
+
+function formatMessage(lines: [string, string, string]): string {
+  return lines.join('\n');
+}
+
+function getMessageForType(type: MessageType, indicators: AttemptIndicators): string {
+  const countHint = indicators.evidenceSeenCount > 0
+    ? `جمعت ${indicators.evidenceSeenCount} دليل.`
     : '';
 
-  switch (rank) {
-    case 'S':
-      return `ممتاز! فكّرت بطريقة منهجية: رفضت الفرضيات الخاطئة بالأدلة الصحيحة، ثم أثبتّ الحل بأقوى الأدلة. هكذا يعمل المحققون المحترفون!${mistakesNote}`;
-    case 'A':
-      return `أحسنت! وصلت للحل الصحيح بطريقة جيدة. لو جمعت بين E3 و E4 معاً، أو رفضت كل الفرضيات الخاطئة أولاً، كانت النتيجة أفضل.${mistakesNote}`;
-    case 'B':
-      return `وصلت للحل، لكن مسارك كان يمكن أن يكون أدق. تذكّر: الأدلة الحاسمة (مثل فرق المخزون) أقوى من الأدلة الداعمة.${mistakesNote}`;
-    case 'C':
-      return `وصلت للحل لكن بعد جهد. التفكير التحليلي يعني: اجمع الأدلة أولاً، ارفض الخطأ بالدليل، ثم أثبت الصحيح بأقوى دليل.${mistakesNote}`;
+  switch (type) {
+    case 'SUCCESS_FULL':
+      return formatMessage([
+        'أحسنت! الحل صح.',
+        'استبعدت الفرضيات التانية بالدليل… ده تفكير مضبوط.',
+        'كمّل كده: استبعاد واضح وبعدين تثبيت بأقوى دليل.',
+      ]);
+    case 'SUCCESS_AFTER_CORRECTION':
+      return formatMessage([
+        'وصلت للحل الصح.',
+        'غلطت في الأول بس رجعت صححت… ده تعلم حقيقي.',
+        'لما الدليل ما يكونش حاسم، دور على دليل أقوى قبل ما ترفض.',
+      ]);
+    case 'SUCCESS_JUMPED_EARLY':
+      return formatMessage([
+        'إجابتك طلعت صح.',
+        'بس وصلت بسرعة قوي من غير ما تستبعد البدائل.',
+        'قبل ما تحكم، اجمع أدلة أكتر وارفض الغلط بالدليل.',
+      ]);
+    case 'SUCCESS_PARTIAL_ELIMINATION':
+      return formatMessage([
+        'الحل صح.',
+        'كويس… بس لسه فيه فرضيات ما اتشالتش بالدليل.',
+        'كمّل الاستبعاد واحدة واحدة عشان يبقى قرارك قوي.',
+      ]);
+    case 'SUCCESS_DEFAULT':
+      return formatMessage([
+        'الحل صح.',
+        countHint || 'وصلت للحل بطريقة كويسة.',
+        'حافظ على جمع الأدلة وربطها بالفرضيات.',
+      ]);
+    case 'FAIL_RANDOM_REJECTION':
+      return formatMessage([
+        'الحل مش صح.',
+        'فيه رفض كتير حصل من غير ربط قوي بالدليل.',
+        'ارفض بس لما يكون معاك دليل واضح يناقض الفرضية.',
+      ]);
+    case 'FAIL_THOUGHTFUL_TRICKED':
+      return formatMessage([
+        'للأسف الحل طلع مش صح.',
+        'بس واضح إنك اشتغلت: جمعت أدلة وبدأت تستبعد.',
+        'اللي وقعك إن دليل شكله قوي خدعك… ركّز على دليل يحسم ويقصّي البدائل.',
+      ]);
+    case 'FAIL_GUESSING':
+      return formatMessage([
+        'الحل مش صح.',
+        'القرار كان سريع قبل ما تجمع أدلة كفاية.',
+        'خد وقتك: اجمع أدلة الأول، وبعدين اختار.',
+      ]);
   }
 }
 
-// توليد Feedback الفشل
-export function generateFailureFeedback(attempt: any): string {
-  if (!attempt) {
+export function generateFeedback(session: GameSession, _rank: Rank): string {
+  const currentAttempt = session.attempts[session.currentAttempt - 1];
+  if (!currentAttempt) {
     return 'لم تبدأ المحاولة بعد.';
   }
 
-  const discoveredEvidence = attempt.discoveredEvidence || [];
-  const hasE2 = discoveredEvidence.includes('E2');
-  const hasE3 = discoveredEvidence.includes('E3');
-  const hasE4 = discoveredEvidence.includes('E4');
-  const hasE5 = discoveredEvidence.includes('E5');
-  const rejectedAny = attempt.rejectedHypotheses?.length > 0;
-  const evidenceCount = discoveredEvidence.length;
+  const indicators = getAttemptIndicators(currentAttempt);
+  const messageType = classifyMessageType(indicators);
 
-  if (evidenceCount < 2) {
-    return 'لم تجمع معلومات كافية! المحلّل الجيد يبحث ويسأل قبل أن يحكم. جرّب التحدث مع المزيد من الشخصيات.';
-  }
-
-  if (hasE5 && !hasE3 && !hasE4) {
-    return 'اعتمدت على آراء شخصية بدلاً من الحقائق! كلام الزبائن عن "الوضع العام" لا يفسر مشكلة هذا المتجر تحديداً.';
-  }
-
-  if (hasE2 && !hasE3) {
-    return 'وقعت في فخ الأرقام المغرية! متوسط الفاتورة الأقل قد يكون نتيجة وليس سبباً. ابحث عن الدليل الذي يكشف التناقض الحقيقي.';
-  }
-
-  if (!rejectedAny && hasE3) {
-    return 'اكتشفت دليلاً مهماً لكن لم تستخدمه لرفض الفرضيات الخاطئة أولاً. جرّب استبعاد الاحتمالات قبل إعلان الحل.';
-  }
-
-  if (!rejectedAny) {
-    return 'قفزت للنتيجة بدون استبعاد الاحتمالات الخاطئة! الحل الصحيح يظهر بوضوح عندما ترفض الخطأ بالدليل أولاً.';
-  }
-
-  return 'توقفت عند فرضية لم تتأكد منها بالأدلة الكافية. تذكّر: الدليل الحاسم هو الذي يكشف تناقضاً واضحاً في البيانات.';
+  return getMessageForType(messageType, indicators);
 }
 
 // توليد رسالة فشل النفي
