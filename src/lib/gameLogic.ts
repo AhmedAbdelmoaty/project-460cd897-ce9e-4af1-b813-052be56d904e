@@ -8,7 +8,10 @@ import {
   VALIDITY_MAP, 
   SCORING_RULES,
   TRAP_MESSAGES,
-  Step
+  Step,
+  Attempt,
+  PathSignature,
+  PathPattern
 } from '@/types/game';
 import { mainScenario } from '@/data/scenario';
 
@@ -80,6 +83,302 @@ export function canDeclareWithEvidence(
   const isOptimal = hasE3 && hasE4;
   
   return { valid: true, isOptimal, score };
+}
+
+// ============= نظام تحليل المسارات الذكي =============
+
+// تحليل بصمة المسار
+export function analyzePathSignature(attempt: Attempt, session: GameSession): PathSignature {
+  const steps = attempt.steps;
+  const discoveredEvidence = attempt.discoveredEvidence;
+  
+  // تحليل الأدلة المكتشفة
+  const hasE1 = discoveredEvidence.includes('E1');
+  const hasE2 = discoveredEvidence.includes('E2');
+  const hasE3 = discoveredEvidence.includes('E3');
+  const hasE4 = discoveredEvidence.includes('E4');
+  const hasE5 = discoveredEvidence.includes('E5');
+  const hasE6 = discoveredEvidence.includes('E6');
+  
+  // تحليل خطوات الرفض
+  const rejectionSteps = steps.filter(s => s.action === 'reject_hypothesis');
+  const validRejections = rejectionSteps.filter(s => s.valid);
+  const rejectedH1 = validRejections.some(s => s.hypothesis === 'H1');
+  const rejectedH2 = validRejections.some(s => s.hypothesis === 'H2');
+  
+  // التحقق من الفخاخ في الرفض
+  const failedRejection = rejectionSteps.find(s => !s.valid);
+  const fellIntoTrap = failedRejection !== undefined;
+  let trapType: 'E2' | 'E5' | null = null;
+  if (failedRejection && failedRejection.evidence) {
+    if (failedRejection.evidence.includes('E2')) trapType = 'E2';
+    else if (failedRejection.evidence.includes('E5')) trapType = 'E5';
+  }
+  
+  // تحليل خطوة الحل
+  const solutionStep = steps.find(s => s.action === 'declare_solution');
+  const declaredSolution = solutionStep !== undefined;
+  const declaredH1 = solutionStep?.hypothesis === 'H1';
+  const declaredH2 = solutionStep?.hypothesis === 'H2';
+  const declaredH3 = solutionStep?.hypothesis === 'H3';
+  const declaredCorrectHypothesis = declaredH3 && solutionStep?.valid === true;
+  
+  // تحليل الأدلة المستخدمة في الحل
+  const solutionEvidence = solutionStep?.evidence || [];
+  const usedE3InSolution = solutionEvidence.includes('E3');
+  const usedE4InSolution = solutionEvidence.includes('E4');
+  const usedE6InSolution = solutionEvidence.includes('E6');
+  
+  // ترتيب الخطوات
+  const solutionStepIndex = steps.findIndex(s => s.action === 'declare_solution');
+  const h1RejectionIndex = steps.findIndex(s => s.action === 'reject_hypothesis' && s.hypothesis === 'H1' && s.valid);
+  const h2RejectionIndex = steps.findIndex(s => s.action === 'reject_hypothesis' && s.hypothesis === 'H2' && s.valid);
+  const rejectedBeforeSolution = solutionStepIndex === -1 || 
+    (h1RejectionIndex !== -1 && h1RejectionIndex < solutionStepIndex) ||
+    (h2RejectionIndex !== -1 && h2RejectionIndex < solutionStepIndex);
+  
+  // عدد الخطوات الفعلية (غير الرفض)
+  const actionSteps = steps.filter(s => s.action !== 'reject_hypothesis').length;
+  
+  return {
+    // الأدلة
+    totalEvidenceDiscovered: discoveredEvidence.length,
+    hasDecisiveEvidence: hasE3,
+    hasSupportingEvidence: hasE4 || hasE6,
+    hasFactualEvidence: hasE1,
+    hasMisleadingEvidence: hasE2,
+    hasTrapEvidence: hasE5,
+    discoveredEvidenceIds: discoveredEvidence,
+    
+    // الرفض
+    totalRejections: validRejections.length,
+    rejectedH1,
+    rejectedH2,
+    rejectedH1WithCorrectEvidence: rejectedH1,
+    rejectedH2WithCorrectEvidence: rejectedH2,
+    rejectedBeforeSolution,
+    
+    // الفخاخ
+    fellIntoTrap,
+    trapType,
+    failedRejectionAttempt: failedRejection !== undefined,
+    
+    // الحل
+    declaredSolution,
+    declaredCorrectHypothesis,
+    declaredH1,
+    declaredH2,
+    declaredH3,
+    usedDecisiveEvidence: usedE3InSolution,
+    usedOptimalEvidence: usedE3InSolution && usedE4InSolution,
+    usedWeakEvidence: usedE4InSolution && !usedE3InSolution,
+    usedE6: usedE6InSolution,
+    solutionEvidenceIds: solutionEvidence,
+    
+    // السرعة
+    totalSteps: steps.length,
+    wasRushed: actionSteps <= 2,
+    wasVeryRushed: actionSteps <= 1,
+    wasSlow: actionSteps > 5,
+    
+    // المحاولات
+    attemptNumber: attempt.attemptNumber,
+    isFirstAttempt: attempt.attemptNumber === 1,
+    previousAttemptsFailed: attempt.attemptNumber - 1,
+    
+    // الحالة
+    wasSuccessful: attempt.status === 'success',
+    wasFailure: attempt.status === 'failed',
+    wasGameOver: session.currentAttempt >= session.maxAttempts && attempt.status === 'failed',
+  };
+}
+
+// تحديد نمط المسار
+export function detectPathPattern(signature: PathSignature): PathPattern {
+  // === حالات النجاح ===
+  if (signature.wasSuccessful) {
+    // المسار المثالي
+    if (signature.rejectedH1 && signature.rejectedH2 && signature.usedOptimalEvidence) {
+      return 'IDEAL_PATH';
+    }
+    // رفض كامل بدليل واحد
+    if (signature.rejectedH1 && signature.rejectedH2) {
+      return 'GOOD_PATH_FULL_REJECT';
+    }
+    // رفض جزئي H1
+    if (signature.rejectedH1 && !signature.rejectedH2) {
+      return 'PARTIAL_REJECT_H1';
+    }
+    // رفض جزئي H2
+    if (signature.rejectedH2 && !signature.rejectedH1) {
+      return 'PARTIAL_REJECT_H2';
+    }
+    // بدون رفض
+    if (signature.totalRejections === 0) {
+      if (signature.wasVeryRushed) {
+        return 'VERY_RUSHED_CORRECT';
+      }
+      if (signature.wasRushed) {
+        return 'RUSHED_CORRECT';
+      }
+      if (signature.usedOptimalEvidence) {
+        return 'NO_REJECT_OPTIMAL';
+      }
+      if (signature.usedDecisiveEvidence) {
+        return 'NO_REJECT_DECISIVE';
+      }
+      if (signature.usedE6) {
+        return 'NO_REJECT_E6';
+      }
+      if (signature.usedWeakEvidence) {
+        return 'NO_REJECT_WEAK';
+      }
+    }
+    // تسرّع لكن صحيح
+    if (signature.wasRushed) {
+      return 'RUSHED_CORRECT';
+    }
+  }
+  
+  // === حالات الفشل ===
+  
+  // فخ في الرفض
+  if (signature.fellIntoTrap) {
+    if (signature.trapType === 'E2') {
+      return 'TRAP_E2_REJECTION';
+    }
+    if (signature.trapType === 'E5') {
+      return 'TRAP_E5_REJECTION';
+    }
+  }
+  
+  // نفي خاطئ (بدون فخ)
+  if (signature.failedRejectionAttempt && !signature.fellIntoTrap) {
+    return 'WRONG_REJECTION';
+  }
+  
+  // اختار فرضية خاطئة
+  if (signature.declaredH1) {
+    return 'WRONG_H1';
+  }
+  if (signature.declaredH2) {
+    return 'WRONG_H2';
+  }
+  
+  // H3 بدليل خاطئ
+  if (signature.declaredH3 && !signature.declaredCorrectHypothesis) {
+    // استخدم E2 للحل
+    if (signature.solutionEvidenceIds.includes('E2')) {
+      return 'TRAP_E2_SOLUTION';
+    }
+    return 'WRONG_H3_BAD_EVIDENCE';
+  }
+  
+  // === Game Over ===
+  if (signature.wasGameOver) {
+    if (signature.totalEvidenceDiscovered < 2) {
+      return 'GAME_OVER_NO_EVIDENCE';
+    }
+    if (signature.fellIntoTrap) {
+      return 'GAME_OVER_FELL_TRAPS';
+    }
+    if (signature.hasDecisiveEvidence) {
+      return 'GAME_OVER_HAD_E3';
+    }
+    return 'GAME_OVER_GENERAL';
+  }
+  
+  // حالة افتراضية
+  return 'GAME_OVER_GENERAL';
+}
+
+// قاموس رسائل الـ Feedback المخصصة لكل نمط
+const FEEDBACK_TEMPLATES: Record<PathPattern, string> = {
+  // === نجاح ===
+  'IDEAL_PATH': 
+    'ممتاز! 🏆 فكّرت كما يفكّر المحقق المحترف: جمعت الأدلة، رفضت الفرضيات الخاطئة واحدة تلو الأخرى بالأدلة القاطعة، ثم أثبتّ الحل بأقوى الأدلة. مسار مثالي!',
+  
+  'GOOD_PATH_FULL_REJECT': 
+    'أحسنت! 🎯 رفضت كلتا الفرضيتين الخاطئتين قبل إعلان الحل. لو جمعت بين الدليل الحاسم (E3) والداعم (E4) معاً، كانت النتيجة أفضل.',
+  
+  'PARTIAL_REJECT_H1': 
+    'جيد! ✓ رفضت فرضية "قلة الزبائن" بشكل صحيح ووصلت للحل. لكن كان يمكنك أيضاً رفض فرضية "يصرفون أقل" لتكون أكثر دقة وتحصل على نقاط أعلى.',
+  
+  'PARTIAL_REJECT_H2': 
+    'وصلت للحل الصحيح! ✓ لكن نسيت استبعاد فرضية "قلة عدد الزبائن". المحلّل الجيد يُغلق كل الأبواب الخاطئة قبل فتح الباب الصحيح.',
+  
+  'NO_REJECT_OPTIMAL': 
+    'وصلت للحل الصحيح بأقوى الأدلة! لكنك قفزت مباشرة دون استبعاد الفرضيات الأخرى. ماذا لو كانت المشكلة فعلاً في عدد الزبائن أو مستوى إنفاقهم؟ التحليل المنهجي يبدأ برفض الخطأ.',
+  
+  'NO_REJECT_DECISIVE': 
+    'وصلت للحل الصحيح بالدليل الحاسم. 👍 لكن تسرّعت قليلاً - كان يجب أن ترفض الفرضيات الخاطئة أولاً لتتأكد من استبعاد كل الاحتمالات.',
+  
+  'NO_REJECT_WEAK': 
+    'وصلت للحل الصحيح، لكن استخدمت دليلاً داعماً وليس حاسماً. ⚠️ كلام الكاشير عن التسجيل الورقي يدعم الفرضية، لكن الدليل الأقوى هو الفرق الفعلي بين المخزون والفواتير (E3)!',
+  
+  'NO_REJECT_E6': 
+    'استخدمت التحليل المحاسبي للوصول للحل. ✓ جيد، لكن كان الأفضل أن ترفض الفرضيات الخاطئة أولاً وتستخدم الدليل الأكثر مباشرة (فرق المخزون).',
+  
+  'RUSHED_CORRECT': 
+    'تسرّعت في الحكم! ⚡ صحيح أن الإجابة صحيحة، لكن المحلل الحقيقي لا يكتفي بدليل أو اثنين. كان يجب أن تتأكد من استبعاد الفرضيات الأخرى بالأدلة.',
+  
+  'VERY_RUSHED_CORRECT': 
+    'قفزت مباشرة للنتيجة من أول خطوة! 🚀 صحيح أن الإجابة صحيحة، لكن هذا حظ وليس تحليل. المحلل الحقيقي يجمع الأدلة، يستبعد الخطأ، ثم يثبت الصحيح.',
+  
+  // === فشل - فرضية خاطئة ===
+  'WRONG_H1': 
+    'اخترت فرضية "قلة الزبائن"، لكن هل تأكدت من ذلك؟ ❌ كان هناك دليل يثبت أن حركة الزبائن طبيعية. عُد وتفحّص ما قاله موظف الصالة!',
+  
+  'WRONG_H2': 
+    'اخترت فرضية "يصرفون أقل"، لكن الأدلة لا تدعم ذلك بشكل قاطع. ❌ هل فحصت المخزون مقارنة بالفواتير؟ التناقض الحقيقي يكمن هناك!',
+  
+  'WRONG_H3_BAD_EVIDENCE': 
+    'اخترت الفرضية الصحيحة، لكن بدليل لا يثبتها! ❌ ابحث عن الدليل الذي يُظهر التناقض بين المبيعات المسجّلة والمخزون الفعلي.',
+  
+  // === فشل - فخاخ ===
+  'TRAP_E2_REJECTION': 
+    'وقعت في فخ "متوسط الفاتورة"! 🪤 هذا الرقم يبدو مهماً لكنه مجرد نتيجة وليس سبباً. الانخفاض البسيط في المتوسط قد يكون عادياً تماماً. ابحث عن الدليل الذي يكشف تناقضاً حقيقياً!',
+  
+  'TRAP_E5_REJECTION': 
+    'وقعت في فخ الرأي الشخصي! 🪤 اعتمدت على ما قاله الزبون عن "الوضع الاقتصادي"، لكن هذا انطباع عام وليس دليلاً على ما يحدث في هذا المتجر تحديداً. ابحث عن الأرقام والحقائق الموثقة!',
+  
+  'TRAP_E2_SOLUTION': 
+    'حاولت إثبات الحل بدليل مضلل! 🪤 متوسط الفاتورة لا علاقة له بمشكلة التسجيل. ابحث عن الدليل الذي يُظهر الفرق بين ما بِيع فعلاً وما سُجّل.',
+  
+  // === فشل - نفي خاطئ ===
+  'WRONG_REJECTION': 
+    'حاولت نفي الفرضية بدليل لا علاقة له بها! ⚠️ فكّر في العلاقة المنطقية: ما الذي يجب أن يكون صحيحاً لكي تكون هذه الفرضية خاطئة؟',
+  
+  // === Game Over ===
+  'GAME_OVER_NO_EVIDENCE': 
+    'استنفدت محاولاتك! 💔 لم تجمع معلومات كافية. المحلّل الجيد يبحث ويسأل قبل أن يحكم. تذكّر: التحدث مع الموظفين وفحص السجلات يكشف الحقائق.',
+  
+  'GAME_OVER_HAD_E3': 
+    'استنفدت محاولاتك! 💔 الغريب أنك اكتشفت الدليل الحاسم (فرق المخزون والفواتير) لكنك لم تستخدمه بالشكل الصحيح. هذا الدليل يثبت أن المبيعات تحدث لكن لا تُسجّل!',
+  
+  'GAME_OVER_FELL_TRAPS': 
+    'استنفدت محاولاتك بسبب الفخاخ! 🪤 وقعت في فخ الأدلة المضللة. تذكّر: الآراء الشخصية والأرقام السطحية ليست أدلة قاطعة. ابحث عن التناقضات في البيانات الفعلية.',
+  
+  'GAME_OVER_GENERAL': 
+    'استنفدت محاولاتك! 💔 السر في هذا اللغز: ابحث عن التناقض بين ما هو مُسجّل (الفواتير) وما هو موجود فعلاً (المخزون). الأرقام لا تكذب!',
+};
+
+// توليد feedback ذكي بناءً على تحليل المسار
+export function generateSmartFeedback(attempt: Attempt, session: GameSession): string {
+  const signature = analyzePathSignature(attempt, session);
+  const pattern = detectPathPattern(signature);
+  
+  let feedback = FEEDBACK_TEMPLATES[pattern];
+  
+  // إضافة تفاصيل إضافية حسب المحاولة
+  if (!signature.isFirstAttempt && signature.wasSuccessful) {
+    const attemptNote = signature.attemptNumber === 2 
+      ? ' (المحاولة الثانية - النقاط مخفضة بنسبة 30%)'
+      : ' (المحاولة الثالثة - النقاط مخفضة بنسبة 50%)';
+    feedback += attemptNote;
+  }
+  
+  return feedback;
 }
 
 // حساب النقاط النهائية
@@ -232,61 +531,25 @@ export function buildTimeline(steps: Step[]): TimelineItem[] {
   });
 }
 
-// توليد الـFeedback النهائي
+// توليد الـFeedback النهائي - الآن يستخدم النظام الذكي
 export function generateFeedback(session: GameSession, rank: Rank): string {
   const currentAttempt = session.attempts[session.currentAttempt - 1];
   
-  if (!currentAttempt || currentAttempt.status !== 'success') {
-    return generateFailureFeedback(currentAttempt);
-  }
-
-  switch (rank) {
-    case 'S':
-      return 'ممتاز! فكّرت بطريقة منهجية: رفضت الفرضيات الخاطئة بالأدلة الصحيحة، ثم أثبتّ الحل بأقوى الأدلة. هكذا يعمل المحققون المحترفون!';
-    case 'A':
-      return 'أحسنت! وصلت للحل الصحيح بطريقة جيدة. لو جمعت بين E3 و E4 معاً، أو رفضت كل الفرضيات الخاطئة أولاً، كانت النتيجة أفضل.';
-    case 'B':
-      return 'وصلت للحل، لكن مسارك كان يمكن أن يكون أدق. تذكّر: الأدلة الحاسمة (مثل فرق المخزون) أقوى من الأدلة الداعمة.';
-    case 'C':
-      return 'وصلت للحل لكن بعد جهد. التفكير التحليلي يعني: اجمع الأدلة أولاً، ارفض الخطأ بالدليل، ثم أثبت الصحيح بأقوى دليل.';
-  }
-}
-
-// توليد Feedback الفشل
-export function generateFailureFeedback(attempt: any): string {
-  if (!attempt) {
+  if (!currentAttempt) {
     return 'لم تبدأ المحاولة بعد.';
   }
 
-  const discoveredEvidence = attempt.discoveredEvidence || [];
-  const hasE2 = discoveredEvidence.includes('E2');
-  const hasE3 = discoveredEvidence.includes('E3');
-  const hasE4 = discoveredEvidence.includes('E4');
-  const hasE5 = discoveredEvidence.includes('E5');
-  const rejectedAny = attempt.rejectedHypotheses?.length > 0;
-  const evidenceCount = discoveredEvidence.length;
+  // استخدام نظام الـ Feedback الذكي
+  return generateSmartFeedback(currentAttempt, session);
+}
 
-  if (evidenceCount < 2) {
-    return 'لم تجمع معلومات كافية! المحلّل الجيد يبحث ويسأل قبل أن يحكم. جرّب التحدث مع المزيد من الشخصيات.';
+// توليد Feedback الفشل - محدث لاستخدام النظام الذكي
+export function generateFailureFeedback(attempt: Attempt, session: GameSession): string {
+  if (!attempt) {
+    return 'لم تبدأ المحاولة بعد.';
   }
-
-  if (hasE5 && !hasE3 && !hasE4) {
-    return 'اعتمدت على آراء شخصية بدلاً من الحقائق! كلام الزبائن عن "الوضع العام" لا يفسر مشكلة هذا المتجر تحديداً.';
-  }
-
-  if (hasE2 && !hasE3) {
-    return 'وقعت في فخ الأرقام المغرية! متوسط الفاتورة الأقل قد يكون نتيجة وليس سبباً. ابحث عن الدليل الذي يكشف التناقض الحقيقي.';
-  }
-
-  if (!rejectedAny && hasE3) {
-    return 'اكتشفت دليلاً مهماً لكن لم تستخدمه لرفض الفرضيات الخاطئة أولاً. جرّب استبعاد الاحتمالات قبل إعلان الحل.';
-  }
-
-  if (!rejectedAny) {
-    return 'قفزت للنتيجة بدون استبعاد الاحتمالات الخاطئة! الحل الصحيح يظهر بوضوح عندما ترفض الخطأ بالدليل أولاً.';
-  }
-
-  return 'توقفت عند فرضية لم تتأكد منها بالأدلة الكافية. تذكّر: الدليل الحاسم هو الذي يكشف تناقضاً واضحاً في البيانات.';
+  
+  return generateSmartFeedback(attempt, session);
 }
 
 // توليد رسالة فشل النفي
