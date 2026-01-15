@@ -13,7 +13,8 @@ import { mainScenario } from '@/data/scenario';
 import { 
   canRejectHypothesisWithEvidence, 
   canDeclareWithEvidence,
-  generateRejectionFailureFeedback 
+  generateRejectionFailureFeedback,
+  generateSmartFeedback
 } from '@/lib/gameLogic';
 
 export type GameScreen = 'welcome' | 'intro' | 'gameplay' | 'failure' | 'gameover' | 'success';
@@ -228,26 +229,36 @@ export function useGameSession() {
     } else {
       // التحقق من عدد المحاولات المتبقية
       if (session.currentAttempt >= GAME_LIMITS.MAX_ATTEMPTS) {
+        // توليد feedback ذكي للـ Game Over
+        const failedAttempt: Attempt = {
+          ...session.attempts[session.currentAttempt - 1],
+          steps: [...session.attempts[session.currentAttempt - 1].steps, newStep],
+          finalDecision,
+          status: 'failed',
+        };
+        const updatedSession = {
+          ...session,
+          attempts: session.attempts.map((a, i) => 
+            i === session.currentAttempt - 1 ? failedAttempt : a
+          ),
+        };
+        setFailureFeedback(generateSmartFeedback(failedAttempt, updatedSession));
         setScreen('gameover');
       } else {
-        // توليد feedback للفشل
-        const hasE2 = discoveredEvidence.includes('E2');
-        const hasE3 = discoveredEvidence.includes('E3');
-        const hasE5 = discoveredEvidence.includes('E5');
-        const rejectedAny = hypotheses.some(h => h.status === 'rejected');
-
-        if (discoveredEvidence.length < 2) {
-          setFailureFeedback('لم تجمع معلومات كافية قبل إعلان النتيجة. المحلّل الجيد يبحث ويسأل قبل أن يحكم.');
-        } else if (hasE5 && !hasE3) {
-          setFailureFeedback('اعتمدت على آراء شخصية بدلاً من الحقائق! ابحث عن أدلة ملموسة.');
-        } else if (hasE2 && !hasE3) {
-          setFailureFeedback('وقعت في فخ الأرقام المغرية! متوسط الفاتورة الأقل قد يكون نتيجة وليس سبباً.');
-        } else if (!rejectedAny) {
-          setFailureFeedback('قفزت للنتيجة بدون استبعاد الاحتمالات الخاطئة! جرّب رفض الفرضيات الخاطئة أولاً.');
-        } else {
-          setFailureFeedback('اخترت الفرضية الخاطئة! راجع الأدلة بعناية وفكّر: أي دليل يكشف تناقضاً حقيقياً؟');
-        }
-
+        // توليد feedback ذكي للفشل
+        const failedAttempt: Attempt = {
+          ...session.attempts[session.currentAttempt - 1],
+          steps: [...session.attempts[session.currentAttempt - 1].steps, newStep],
+          finalDecision,
+          status: 'failed',
+        };
+        const updatedSession = {
+          ...session,
+          attempts: session.attempts.map((a, i) => 
+            i === session.currentAttempt - 1 ? failedAttempt : a
+          ),
+        };
+        setFailureFeedback(generateSmartFeedback(failedAttempt, updatedSession));
         setScreen('failure');
       }
     }

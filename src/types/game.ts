@@ -105,6 +105,92 @@ export interface GameResult {
   attemptUsed: number;
 }
 
+// بصمة المسار - لتحليل كل مسار ممكن
+export interface PathSignature {
+  // الأدلة المكتشفة
+  totalEvidenceDiscovered: number;
+  hasDecisiveEvidence: boolean;       // E3
+  hasSupportingEvidence: boolean;     // E4 أو E6
+  hasFactualEvidence: boolean;        // E1
+  hasMisleadingEvidence: boolean;     // E2
+  hasTrapEvidence: boolean;           // E5
+  discoveredEvidenceIds: EvidenceId[];
+  
+  // الرفض
+  totalRejections: number;
+  rejectedH1: boolean;
+  rejectedH2: boolean;
+  rejectedH1WithCorrectEvidence: boolean;
+  rejectedH2WithCorrectEvidence: boolean;
+  rejectedBeforeSolution: boolean;
+  
+  // الفخاخ والأخطاء
+  fellIntoTrap: boolean;
+  trapType: 'E2' | 'E5' | null;
+  failedRejectionAttempt: boolean;
+  
+  // الحل
+  declaredSolution: boolean;
+  declaredCorrectHypothesis: boolean;
+  declaredH1: boolean;
+  declaredH2: boolean;
+  declaredH3: boolean;
+  usedDecisiveEvidence: boolean;      // E3
+  usedOptimalEvidence: boolean;       // E3 + E4
+  usedWeakEvidence: boolean;          // E4 فقط
+  usedE6: boolean;
+  solutionEvidenceIds: EvidenceId[];
+  
+  // السرعة والكفاءة
+  totalSteps: number;
+  wasRushed: boolean;                 // خطوة واحدة أو اثنتان
+  wasVeryRushed: boolean;             // خطوة واحدة فقط
+  wasSlow: boolean;                   // أكثر من 5 خطوات
+  
+  // المحاولات
+  attemptNumber: number;
+  isFirstAttempt: boolean;
+  previousAttemptsFailed: number;
+  
+  // الحالة النهائية
+  wasSuccessful: boolean;
+  wasFailure: boolean;
+  wasGameOver: boolean;
+}
+
+// أنماط المسارات المحتملة
+export type PathPattern = 
+  // نجاح
+  | 'IDEAL_PATH'                    // رفض H1+H2 ثم H3 بـ E3+E4
+  | 'GOOD_PATH_FULL_REJECT'         // رفض H1+H2 ثم H3 بدليل واحد
+  | 'PARTIAL_REJECT_H1'             // رفض H1 فقط ثم H3
+  | 'PARTIAL_REJECT_H2'             // رفض H2 فقط ثم H3
+  | 'NO_REJECT_OPTIMAL'             // بدون رفض لكن E3+E4
+  | 'NO_REJECT_DECISIVE'            // بدون رفض لكن E3
+  | 'NO_REJECT_WEAK'                // بدون رفض وE4 فقط
+  | 'NO_REJECT_E6'                  // بدون رفض وE6
+  | 'RUSHED_CORRECT'                // تسرّع شديد لكن صحيح
+  | 'VERY_RUSHED_CORRECT'           // خطوة واحدة وصحيح
+  
+  // فشل - فرضية خاطئة
+  | 'WRONG_H1'                      // اختار H1
+  | 'WRONG_H2'                      // اختار H2
+  | 'WRONG_H3_BAD_EVIDENCE'         // H3 بدليل خاطئ
+  
+  // فشل - فخ
+  | 'TRAP_E2_REJECTION'             // استخدم E2 للرفض
+  | 'TRAP_E5_REJECTION'             // استخدم E5 للرفض
+  | 'TRAP_E2_SOLUTION'              // استخدم E2 للحل
+  
+  // فشل - نفي خاطئ
+  | 'WRONG_REJECTION'               // نفي بدليل غير صالح
+  
+  // انتهاء المحاولات
+  | 'GAME_OVER_NO_EVIDENCE'         // Game over بدون أدلة كافية
+  | 'GAME_OVER_HAD_E3'              // Game over مع E3
+  | 'GAME_OVER_FELL_TRAPS'          // Game over بسبب الفخاخ
+  | 'GAME_OVER_GENERAL';            // Game over عام
+
 // خريطة صلاحية الأدلة - محدثة مع الفخاخ
 export interface ValidityRule {
   validEvidence: EvidenceId[];      // أدلة صحيحة للنفي/الإثبات
