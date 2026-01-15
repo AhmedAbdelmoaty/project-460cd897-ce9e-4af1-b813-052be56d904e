@@ -71,7 +71,6 @@ export interface Attempt {
   steps: Step[];
   discoveredEvidence: EvidenceId[];
   rejectedHypotheses: HypothesisId[];
-  reasoningMistakes: number;
   finalDecision?: {
     hypothesis: HypothesisId;
     evidence: EvidenceId[];  // تغيير لدعم أدلة متعددة
@@ -167,8 +166,6 @@ export const SCORING_RULES = {
   PENALTY_PER_EXTRA_STEP: 40,
   PENALTY_NO_REJECTIONS: 150,
   PENALTY_WEAK_EVIDENCE: 50,  // استخدام دليل ضعيف في الإثبات
-  PENALTY_REASONING_MISTAKE: 40,
-  PENALTY_REASONING_MISTAKE_ESCALATION: 20,
   
   // معاملات المحاولات
   ATTEMPT_2_MULTIPLIER: 0.7,
