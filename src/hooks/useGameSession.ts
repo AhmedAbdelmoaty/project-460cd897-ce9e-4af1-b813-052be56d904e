@@ -126,63 +126,90 @@ export function useGameSession() {
   );
 
   // رفض فرضية (لا يستهلك خطوة) — الخطأ لا يُنهي المحاولة، لكنه يؤثر على التقييم
-  const rejectHypothesis = useCallback(
-    (
-      hypothesisId: HypothesisId,
-      evidenceIds: EvidenceId[]
-    ): { success: boolean; message: string } => {
-      if (!session) {
-        return { success: false, message: 'لا توجد جلسة نشطة' };
+const rejectHypothesis = useCallback(
+  (hypothesisId: HypothesisId, evidenceIds: EvidenceId[]): { success: boolean; message: string } => {
+    if (!session) {
+      return { success: false, message: 'لا توجد جلسة نشطة' };
+    }
+
+    // السماح بدليل واحد فقط
+    const picked = evidenceIds.slice(0, 1);
+
+    let localMessage = '';
+    let isValid = false;
+
+    setSession((prev) => {
+      const attempts = [...(prev?.attempts || [])];
+      const idx = (prev?.currentAttempt || 1) - 1;
+      const current = attempts[idx];
+      if (!current) return prev!;
+
+      // 1) حد أقصى 3 محاولات رفض لكل محاولة
+      const rejectsCount = current.steps.filter((s) => s.action === 'reject_hypothesis').length;
+      if (rejectsCount >= 3) {
+        localMessage = 'استخدمت كل محاولات الرفض في هذه المحاولة.';
+        return prev!;
       }
 
+      // 2) لا تسمح برفض نفس الفرضية مرتين في نفس المحاولة
+      const alreadyTriedThisHypothesis = current.steps.some(
+        (s) => s.action === 'reject_hypothesis' && s.hypothesis === hypothesisId
+      );
+      if (alreadyTriedThisHypothesis) {
+        localMessage = 'حاولت رفض هذه الفرضية بالفعل في هذه المحاولة.';
+        return prev!;
+      }
+
+      // 3) تحقق صلاحية الرفض
       if (hypothesisId === 'H3') {
-        return { success: false, message: 'لا يمكن رفض الفرضية الثالثة في هذا الكيس. اختبرها بقرار نهائي.' };
+        // لا يوجد دليل في هذا الكيس ينفي H3 (مسموح المحاولة لكن تعتبر غلط)
+        isValid = false;
+        localMessage = 'الدليل ده لا يكفي لرفض هذه الفرضية.';
+      } else {
+        const result = canRejectHypothesisWithEvidence(hypothesisId as Exclude<HypothesisId, 'H3'>, picked);
+        isValid = result.valid;
+        localMessage = result.message || (result.valid ? 'تم رفض الفرضية ✓' : 'الربط غير صحيح.');
       }
 
-      // السماح بدليل واحد فقط
-      const picked = evidenceIds.slice(0, 1);
+      // 4) سجل خطوة الرفض دائماً (صح أو غلط) للتتبع
+      const nextStepNumber = current.steps.length + 1;
 
-      const result = canRejectHypothesisWithEvidence(hypothesisId as Exclude<HypothesisId, 'H3'>, picked);
+      const newStep: Step = {
+        stepNumber: nextStepNumber,
+        action: 'reject_hypothesis',
+        hypothesis: hypothesisId,
+        evidence: picked,
+        valid: isValid,
+        timestamp: Date.now(),
+      };
 
-      setSession((prev) => {
-        const attempts = [...(prev?.attempts || [])];
-        const idx = (prev?.currentAttempt || 1) - 1;
-        const current = attempts[idx];
-        if (!current) return prev!;
+      attempts[idx] = {
+        ...current,
+        steps: [...current.steps, newStep],
+        rejectedHypotheses: isValid ? [...current.rejectedHypotheses, hypothesisId] : current.rejectedHypotheses,
+      };
 
-        const nextStepNumber = current.steps.length + 1;
+      return { ...prev!, attempts };
+    });
 
-        const newStep: Step = {
-          stepNumber: nextStepNumber,
-          action: 'reject_hypothesis',
-          hypothesis: hypothesisId,
-          evidence: picked,
-          valid: result.valid,
-          timestamp: Date.now(),
-        };
+    // لو اتمنع بسبب الحد/التكرار، هيرجع برسالة بدون تسجيل شيء جديد
+    if (localMessage === 'استخدمت كل محاولات الرفض في هذه المحاولة.' ||
+        localMessage === 'حاولت رفض هذه الفرضية بالفعل في هذه المحاولة.') {
+      return { success: false, message: localMessage };
+    }
 
-        attempts[idx] = {
-          ...current,
-          steps: [...current.steps, newStep],
-          rejectedHypotheses: result.valid
-            ? [...current.rejectedHypotheses, hypothesisId]
-            : current.rejectedHypotheses,
-        };
+    // لو الرفض صحيح، نغيّر حالة الفرضية
+    if (isValid) {
+      setHypotheses((prev) =>
+        prev.map((h) => (h.id === hypothesisId ? { ...h, status: 'rejected' as const } : h))
+      );
+      return { success: true, message: 'تم رفض الفرضية بدليل مناسب ✓' };
+    }
 
-        return { ...prev!, attempts };
-      });
-
-      if (result.valid) {
-        setHypotheses((prev) =>
-          prev.map((h) => (h.id === hypothesisId ? { ...h, status: 'rejected' as const } : h))
-        );
-        return { success: true, message: 'تم رفض الفرضية بدليل مناسب ✓' };
-      }
-
-      return { success: false, message: result.message || 'الرفض غير صحيح.' };
-    },
-    [session]
-  );
+    return { success: false, message: localMessage || 'الربط غير صحيح.' };
+  },
+  [session]
+);
 
   // إعلان القرار النهائي (لا يستهلك خطوات التحقيق)
   const declareSolution = useCallback(
