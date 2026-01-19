@@ -146,17 +146,16 @@ const rejectHypothesis = useCallback(
 
       // 1) حد أقصى 3 محاولات رفض لكل محاولة
       const rejectsCount = current.steps.filter((s) => s.action === 'reject_hypothesis').length;
-      if (rejectsCount >= 3) {
+      if (rejectsCount >= 4) {
         localMessage = 'استخدمت كل محاولات الرفض في هذه المحاولة.';
         return prev!;
       }
-
-      // 2) لا تسمح برفض نفس الفرضية مرتين في نفس المحاولة
-      const alreadyTriedThisHypothesis = current.steps.some(
+      const hypothesisRejectCount = current.steps.filter(
         (s) => s.action === 'reject_hypothesis' && s.hypothesis === hypothesisId
-      );
-      if (alreadyTriedThisHypothesis) {
-        localMessage = 'حاولت رفض هذه الفرضية بالفعل في هذه المحاولة.';
+      ).length;
+      
+      if (hypothesisRejectCount >= 2) {
+        localMessage = 'وصلت للحد الأقصى لمحاولات رفض هذه الفرضية في هذه المحاولة.';
         return prev!;
       }
 
