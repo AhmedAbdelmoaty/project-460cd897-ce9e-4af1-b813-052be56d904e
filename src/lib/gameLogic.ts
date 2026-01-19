@@ -90,19 +90,21 @@ export function evaluateDeclaration(
 // =====================
 // 3) بناء بطاقات التقييم
 // =====================
-function getEliminationQuality(attempt: Attempt): EliminationQuality {
+function getEliminationInfo(attempt: Attempt): { level: EliminationQuality; wrongCount: number } {
   const rejected = attempt.steps.filter((s) => s.action === 'reject_hypothesis');
   const validRejections = rejected.filter((s) => s.valid);
   const wrongRejections = rejected.filter((s) => s.valid === false);
 
-  if (wrongRejections.length > 0) return 'has_wrong';
+  const wrongCount = wrongRejections.length;
+
+  if (wrongCount > 0) return { level: 'has_wrong', wrongCount };
 
   const rejectedH1Correct = validRejections.some((s) => s.hypothesis === 'H1');
   const rejectedH2Correct = validRejections.some((s) => s.hypothesis === 'H2');
 
-  if (rejectedH1Correct && rejectedH2Correct) return 'both_correct';
-  if (rejectedH1Correct || rejectedH2Correct) return 'one_correct';
-  return 'none';
+  if (rejectedH1Correct && rejectedH2Correct) return { level: 'both_correct', wrongCount: 0 };
+  if (rejectedH1Correct || rejectedH2Correct) return { level: 'one_correct', wrongCount: 0 };
+  return { level: 'none', wrongCount: 0 };
 }
 
 function getNoiseQuality(attempt: Attempt): NoiseQuality {
@@ -132,7 +134,7 @@ function evidenceCardText(level: EvidenceStrength): string {
   }
 }
 
-function eliminationCardText(level: EliminationQuality): string {
+function eliminationCardText(level: EliminationQuality, wrongCount: number): string {
   switch (level) {
     case 'both_correct':
       return 'استبعاد ممتاز: رفضت الفرضيتين المنافسين بأدلة مناسبة.';
@@ -140,8 +142,11 @@ function eliminationCardText(level: EliminationQuality): string {
       return 'استبعاد جيد: رفضت فرضية منافسة واحدة بدليل مناسب.';
     case 'none':
       return 'بدون استبعاد: حسمت بدون ما تُسقط البدائل.';
-    case 'has_wrong':
-      return 'استبعاد غير دقيق: حاولت رفض فرضية بدليل غير مناسب.';
+    case 'has_wrong': {
+      if (wrongCount === 1) return 'استبعاد غير دقيق: حاولت رفض فرضية بدليل غير مناسب مرة واحدة.';
+      if (wrongCount === 2) return 'استبعاد غير دقيق: حاولت رفض فرضية بدليل غير مناسب مرتين.';
+      return `استبعاد غير دقيق: حاولت رفض فرضية بدليل غير مناسب ${wrongCount} مرات.`;
+    }
   }
 }
 
