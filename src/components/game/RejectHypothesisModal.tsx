@@ -25,7 +25,7 @@ export function RejectHypothesisModal({
   const [feedback, setFeedback] = useState<string>('');
 
   const activeHypotheses = useMemo(
-    () => hypotheses.filter((h) => h.status === 'active' && h.id !== 'H3'),
+    () => hypotheses.filter((h) => h.status === 'active'),
     [hypotheses]
   );
 
